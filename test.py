@@ -5,7 +5,7 @@ OLLAMA_API = "http://localhost:11434/api/chat"
 HEADERS = {"Content-Type": "application/json"}
 MODEL = "llama3.2"
 
-# Create a messages list using the same format that we used for OpenAI
+# Create a messages list using the same format that we used for OpenAI dsdsdsdsds
 
 messages = [
     {"role": "user", "content": "hello"}
