@@ -21,7 +21,7 @@ from app.database import files_collection
 
 MODEL = "gpt-4o-mini"
 
-client = OpenAI(api_key="REDACTED_OPENAI_API_KEY")
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 system_message = """
 You are the AI File Assistant of KnowHere cloud storage.

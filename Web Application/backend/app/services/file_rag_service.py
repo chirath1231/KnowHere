@@ -13,7 +13,7 @@ from app.config import settings
 from app.db import file_chunks_collection, file_chat_sessions_collection
 
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-openai_client = OpenAI(api_key="REDACTED_OPENAI_API_KEY")
+openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:

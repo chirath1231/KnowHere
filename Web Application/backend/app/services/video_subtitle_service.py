@@ -12,8 +12,9 @@ from app.db import files_collection
 from app.services.oci_storage_service import oci_storage
 from app.services.file_ai_service import build_ai_overview
 
-openai_client = OpenAI(api_key="REDACTED_OPENAI_API_KEY")
-
+openai_client = OpenAI(
+    api_key=settings.OPENAI_API_KEY
+)
 
 def get_extension(filename: str) -> str:
     if "." not in filename:
