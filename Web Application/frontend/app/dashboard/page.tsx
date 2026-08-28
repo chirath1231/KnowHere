@@ -10,6 +10,12 @@ import {
   Zap,
   Users,
   ArrowRight,
+  BrainCircuit,
+  Workflow,
+  Database,
+  MessageSquareText,
+  ScanText,
+  Wand2,
 } from 'lucide-react'
 import { getToken, logout } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
@@ -68,10 +74,37 @@ export default function DashboardPage() {
     },
   ]
 
+  const aiSkills = [
+    {
+      icon: ScanText,
+      title: 'Semantic File Retrieval',
+      detail: 'Natural-language understanding to match user intent with file content context.',
+    },
+    {
+      icon: MessageSquareText,
+      title: 'Context-Aware File Chat',
+      detail: 'Interactive Q&A on files with persistent session flow and conversation continuity.',
+    },
+    {
+      icon: Wand2,
+      title: 'Automated Media Intelligence',
+      detail: 'AI-assisted subtitle workflow and smart content enhancement for uploaded videos.',
+    },
+  ]
+
+  const aiWorkflow = [
+    'Upload file metadata and extracted content',
+    'Generate AI overview and searchable representation',
+    'Run semantic search against user prompts',
+    'Open file-level analysis chat for deeper insights',
+  ]
+
+  const techBadges = ['NLP', 'Semantic Search', 'Prompt Engineering', 'Contextual AI', 'AI UX']
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-100">
       {/* Header */}
-      <header className="px-6 py-4 flex items-center justify-between">
+      <header className="px-6 py-4 flex items-center justify-between bg-white/60 backdrop-blur-xl border-b border-primary-100">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
             <Sparkles className="w-6 h-6 text-white" />
@@ -117,6 +150,11 @@ export default function DashboardPage() {
       {/* Hero Section */}
       <main className="max-w-7xl mx-auto px-6 py-16">
         <div className="text-center mb-16">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white/90 px-4 py-1.5 text-sm text-primary-700 ring-1 ring-primary-100 mb-6">
+            <Sparkles className="w-4 h-4" />
+            <span>AI-Powered Semantic Search + Smart File Analysis</span>
+          </div>
+
           <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
             Your files, organized by
             <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -167,9 +205,9 @@ export default function DashboardPage() {
             return (
               <div
                 key={index}
-                className="bg-white rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow border border-gray-100"
+                className="bg-white/90 rounded-xl p-6 shadow-sm hover:shadow-md transition-all border border-primary-100 hover:-translate-y-0.5"
               >
-                <div className="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center mb-4">
+                <div className="w-12 h-12 bg-gradient-to-br from-blue-50 to-violet-50 rounded-lg flex items-center justify-center mb-4 ring-1 ring-primary-100">
                   <Icon className="w-6 h-6 text-blue-600" />
                 </div>
                 <h3 className="text-xl font-semibold text-gray-900 mb-2">
@@ -195,6 +233,74 @@ export default function DashboardPage() {
             <div>
               <div className="text-4xl font-bold text-green-600 mb-2">100%</div>
               <div className="text-gray-600">Secure & Private</div>
+            </div>
+          </div>
+        </div>
+
+        {/* AI Skills Showcase */}
+        <div className="mb-16 rounded-3xl border border-primary-100 bg-white/90 p-8 shadow-sm">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">AI Skills Implemented</h2>
+              <p className="mt-1 text-gray-600">
+                Clear product signals that highlight practical AI engineering skills.
+              </p>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-primary-50 to-violet-50 px-4 py-2 text-sm font-medium text-primary-700 ring-1 ring-primary-100">
+              <BrainCircuit className="h-4 w-4" />
+              AI-first product design
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            {aiSkills.map((skill) => {
+              const Icon = skill.icon
+              return (
+                <div
+                  key={skill.title}
+                  className="rounded-2xl border border-primary-100 bg-gradient-to-br from-white to-primary-50/40 p-5"
+                >
+                  <div className="mb-3 inline-flex rounded-xl bg-white p-2.5 text-primary-700 ring-1 ring-primary-100">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">{skill.title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-gray-600">{skill.detail}</p>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div className="rounded-2xl border border-primary-100 bg-white p-5">
+              <div className="mb-3 flex items-center gap-2 text-primary-700">
+                <Workflow className="h-4 w-4" />
+                <p className="text-sm font-semibold uppercase tracking-wide">AI Workflow</p>
+              </div>
+              <ol className="space-y-2 text-sm text-gray-700">
+                {aiWorkflow.map((step) => (
+                  <li key={step} className="flex items-start gap-2">
+                    <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary-500" />
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="rounded-2xl border border-primary-100 bg-white p-5">
+              <div className="mb-3 flex items-center gap-2 text-violet-700">
+                <Database className="h-4 w-4" />
+                <p className="text-sm font-semibold uppercase tracking-wide">Skill Tags</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {techBadges.map((badge) => (
+                  <span
+                    key={badge}
+                    className="rounded-full bg-gradient-to-r from-primary-50 to-violet-50 px-3 py-1 text-xs font-medium text-primary-800 ring-1 ring-primary-100"
+                  >
+                    {badge}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         </div>

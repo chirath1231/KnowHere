@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import Layout from '@/components/Layout'
 import FileGrid from '@/components/FileGrid'
+import AISearch from '@/components/AISearch'
+import FilePreviewModal from '@/components/FilePreviewModal'
 import { FileItem, normalizeFileItem } from '@/types/file'
 import { FolderPlus, Folder } from 'lucide-react'
 import {
@@ -11,12 +13,14 @@ import {
   getFiles,
   uploadFile,
   deleteFile,
+  searchFilesByAI,
+  fetchPreviewBlob,
+  triggerFileDownload,
 } from '@/lib/api'
 
 export default function FoldersPage() {
   const [folders, setFolders] = useState<FileItem[]>([])
   const [files, setFiles] = useState<FileItem[]>([])
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
@@ -26,6 +30,12 @@ export default function FoldersPage() {
   const [uploading, setUploading] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [error, setError] = useState('')
+  const [aiResults, setAiResults] = useState<FileItem[] | null>(null)
+
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewText, setPreviewText] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   useEffect(() => {
     loadInitialData()
@@ -38,6 +48,14 @@ export default function FoldersPage() {
       loadRootFiles()
     }
   }, [selectedFolder])
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+      }
+    }
+  }, [previewUrl])
 
   const loadInitialData = async () => {
     try {
@@ -52,7 +70,7 @@ export default function FoldersPage() {
       setFolders(foldersData.map(normalizeFileItem))
       setFiles(rootFilesData.map(normalizeFileItem))
     } catch (err: any) {
-      setError(err.message || 'Failed to load data')
+      setError(err?.message || 'Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -64,8 +82,9 @@ export default function FoldersPage() {
       setError('')
       const data = await getFiles(null)
       setFiles(data.map(normalizeFileItem))
+      setAiResults(null)
     } catch (err: any) {
-      setError(err.message || 'Failed to load root files')
+      setError(err?.message || 'Failed to load root files')
     } finally {
       setLoading(false)
     }
@@ -77,8 +96,9 @@ export default function FoldersPage() {
       setError('')
       const data = await getFiles(folderId)
       setFiles(data.map(normalizeFileItem))
+      setAiResults(null)
     } catch (err: any) {
-      setError(err.message || 'Failed to load files')
+      setError(err?.message || 'Failed to load files')
     } finally {
       setLoading(false)
     }
@@ -88,13 +108,10 @@ export default function FoldersPage() {
     try {
       setUploading(true)
       setError('')
-
       const uploaded = await uploadFile(file, selectedFolder)
-      const normalized = normalizeFileItem(uploaded)
-
-      setFiles((prev) => [normalized, ...prev])
+      setFiles((prev) => [normalizeFileItem(uploaded), ...prev])
     } catch (err: any) {
-      setError(err.message || 'File upload failed')
+      setError(err?.message || 'File upload failed')
     } finally {
       setUploading(false)
     }
@@ -104,10 +121,18 @@ export default function FoldersPage() {
     try {
       setError('')
       await deleteFile(fileId)
+
       setFiles((prev) => prev.filter((f) => f.id !== fileId))
-      setSelectedFiles((prev) => prev.filter((id) => id !== fileId))
+
+      if (aiResults) {
+        setAiResults((prev) => (prev ? prev.filter((f) => f.id !== fileId) : null))
+      }
+
+      if (previewFile?.id === fileId) {
+        closePreview()
+      }
     } catch (err: any) {
-      setError(err.message || 'Delete failed')
+      setError(err?.message || 'Delete failed')
     }
   }
 
@@ -117,27 +142,132 @@ export default function FoldersPage() {
     try {
       setCreatingFolder(true)
       setError('')
-
       const created = await createFolder(newFolderName.trim())
       setFolders((prev) => [normalizeFileItem(created), ...prev])
       setNewFolderName('')
       setShowNewFolder(false)
     } catch (err: any) {
-      setError(err.message || 'Failed to create folder')
+      setError(err?.message || 'Failed to create folder')
     } finally {
       setCreatingFolder(false)
     }
   }
 
-  const handleAISearch = (prompt: string) => {
-    setSearchQuery(prompt.toLowerCase())
+  const handleAISearch = async (prompt: string) => {
+    try {
+      setError('')
+      const result = await searchFilesByAI(prompt)
+      setAiResults((result.matches || []).map(normalizeFileItem))
+      setSearchQuery(prompt.toLowerCase())
+      setSelectedFolder(null)
+    } catch (err: any) {
+      setError(err?.message || 'AI search failed')
+    }
+  }
+
+  const clearAISearch = () => {
+    setAiResults(null)
+    setSearchQuery('')
+  }
+
+  const openPreview = async (file: FileItem) => {
+    try {
+      setPreviewLoading(true)
+      setError('')
+      setPreviewFile(file)
+      setPreviewText('')
+
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+        setPreviewUrl(null)
+      }
+
+      const blob = await fetchPreviewBlob(file.id)
+
+      const url = URL.createObjectURL(blob)
+      setPreviewUrl(url)
+
+      const type = (file.type || '').toLowerCase()
+      const blobType = (blob.type || '').toLowerCase()
+      const extension = (file.name?.split('.').pop() || '').toLowerCase()
+      const textTypes = new Set([
+        'txt',
+        'md',
+        'js',
+        'jsx',
+        'ts',
+        'tsx',
+        'py',
+        'java',
+        'c',
+        'cpp',
+        'cs',
+        'php',
+        'go',
+        'rb',
+        'html',
+        'css',
+        'json',
+        'xml',
+        'yml',
+        'yaml',
+        'sql',
+        'csv',
+        'log',
+      ])
+
+      const shouldLoadText =
+        textTypes.has(type) ||
+        textTypes.has(extension) ||
+        blobType.startsWith('text/') ||
+        blobType.includes('json') ||
+        blobType.includes('xml') ||
+        blobType.includes('javascript')
+
+      if (shouldLoadText) {
+        const text = await blob.text()
+        setPreviewText(text)
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to preview file')
+      setPreviewFile(null)
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+      }
+      setPreviewUrl(null)
+      setPreviewText('')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const closePreview = () => {
+    setPreviewFile(null)
+    setPreviewText('')
+    setPreviewLoading(false)
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      setPreviewUrl(null)
+    }
+  }
+
+  const handleDownload = async (file: FileItem) => {
+    try {
+      setError('')
+      await triggerFileDownload(file.id, file.name)
+    } catch (err: any) {
+      setError(err?.message || 'Download failed')
+    }
   }
 
   const displayedItems = useMemo(() => {
+    if (aiResults) return aiResults
     return selectedFolder ? files : [...folders, ...files]
-  }, [selectedFolder, files, folders])
+  }, [aiResults, selectedFolder, files, folders])
 
   const filteredItems = useMemo(() => {
+    if (aiResults) return displayedItems
     if (!searchQuery.trim()) return displayedItems
 
     const q = searchQuery.toLowerCase()
@@ -147,36 +277,39 @@ export default function FoldersPage() {
       const type = item.type?.toLowerCase() || ''
       return name.includes(q) || type.includes(q)
     })
-  }, [displayedItems, searchQuery])
+  }, [displayedItems, searchQuery, aiResults])
 
   const selectedFolderName = folders.find((f) => f.id === selectedFolder)?.name
 
   return (
     <Layout
-      showAISearch={true}
+      showAISearch={false}
       onFileUpload={handleFileUpload}
       viewMode={viewMode}
       onViewModeChange={setViewMode}
       searchQuery={searchQuery}
-      onSearchChange={(query) => {
-        setSearchQuery(query)
-        handleAISearch(query)
-      }}
+      onSearchChange={setSearchQuery}
     >
-      <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
+      <div className="flex h-full min-h-0 flex-col bg-gray-50">
+        <AISearch onSearch={handleAISearch} />
+
         <div className="px-6 py-4 bg-white border-b border-gray-200">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <Folder className="w-6 h-6 text-primary-600 shrink-0" />
+
               <h1 className="text-2xl font-bold text-gray-900 truncate">
-                {selectedFolder ? `Folder: ${selectedFolderName || ''}` : 'Folders'}
+                {aiResults
+                  ? 'AI Search Results'
+                  : selectedFolder
+                  ? `Folder: ${selectedFolderName || ''}`
+                  : 'Folders'}
               </h1>
 
-              {selectedFolder && (
+              {selectedFolder && !aiResults && (
                 <button
                   onClick={() => {
                     setSelectedFolder(null)
-                    setSelectedFiles([])
                     setError('')
                   }}
                   className="text-sm text-primary-600 hover:text-primary-700 whitespace-nowrap"
@@ -184,9 +317,18 @@ export default function FoldersPage() {
                   ← Back to Folders
                 </button>
               )}
+
+              {aiResults && (
+                <button
+                  onClick={clearAISearch}
+                  className="text-sm text-primary-600 hover:text-primary-700 whitespace-nowrap"
+                >
+                  Clear AI Search
+                </button>
+              )}
             </div>
 
-            {!selectedFolder && (
+            {!selectedFolder && !aiResults && (
               <div className="flex items-center gap-2">
                 {showNewFolder ? (
                   <div className="flex items-center gap-2">
@@ -249,25 +391,29 @@ export default function FoldersPage() {
             <FileGrid
               files={filteredItems}
               viewMode={viewMode}
-              selectedFiles={selectedFiles}
-              onSelectFile={(id) => {
-                const item = filteredItems.find((f) => f.id === id)
-
-                if (item?.type === 'folder') {
-                  setSelectedFolder(id)
-                  setSelectedFiles([])
-                } else {
-                  setSelectedFiles((prev) =>
-                    prev.includes(id)
-                      ? prev.filter((fid) => fid !== id)
-                      : [...prev, id]
-                  )
-                }
+              onOpenFolder={(id) => {
+                setSelectedFolder(id)
+                setError('')
               }}
+              onOpenFile={openPreview}
               onDeleteFile={handleFileDelete}
+              onDownloadFile={handleDownload}
             />
           )}
         </div>
+
+        <FilePreviewModal
+          file={previewFile}
+          previewUrl={previewUrl}
+          textContent={previewText}
+          loading={previewLoading}
+          onClose={closePreview}
+          onDownload={() => {
+            if (previewFile) {
+              handleDownload(previewFile)
+            }
+          }}
+        />
       </div>
     </Layout>
   )
