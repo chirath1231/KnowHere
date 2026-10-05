@@ -10,6 +10,7 @@ from app.models import serialize_doc
 from app.oci_service import oci_storage
 from app.dependencies import get_current_user
 from app.services.file_ai_service import build_ai_overview
+from app.services.file_rag_service import delete_file_chunks
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
@@ -200,5 +201,6 @@ def delete_file(
 
     oci_storage.delete_file(file_doc["object_name"])
     files_collection.delete_one({"_id": ObjectId(file_id)})
+    delete_file_chunks(file_id, str(current_user["id"]))
 
     return {"message": "File deleted successfully"}

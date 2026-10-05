@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     OCI_CONFIG_FILE: str
     OCI_CONFIG_PROFILE: str = "DEFAULT"
 
+    CHROMA_API_KEY: str
+    CHROMA_TENANT: str
+    CHROMA_DATABASE: str
+    CHROMA_COLLECTION: str = "file_chunks"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

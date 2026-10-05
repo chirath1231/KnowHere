@@ -1,5 +1,4 @@
 import os
-import json
 import math
 import shutil
 import tempfile
@@ -7,12 +6,21 @@ import subprocess
 import time
 from datetime import datetime
 import base64
+from dataclasses import dataclass
+from typing import Literal, Optional
 
-import requests
 from openai import OpenAI
 from duckduckgo_search import DDGS
 from bson import ObjectId
 from bson.errors import InvalidId
+from pydantic import BaseModel, Field
+
+from langchain.tools import ToolRuntime
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import settings
 from app.services.file_ai_service import build_ai_overview
@@ -21,7 +29,12 @@ from app.database import files_collection
 
 MODEL = "gpt-4o-mini"
 
+# Raw OpenAI client is still used for image generation and audio transcription,
+# which LangChain doesn't wrap for gpt-image-1 / gpt-4o-transcribe.
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+llm = ChatOpenAI(model=MODEL, api_key=settings.OPENAI_API_KEY)
+translator_llm = ChatOpenAI(model="gpt-4.1-mini", api_key=settings.OPENAI_API_KEY)
 
 system_message = """
 You are the AI File Assistant of KnowHere cloud storage.
@@ -261,24 +274,17 @@ def translate_text(text: str, target_language: str = "Sinhala") -> str:
     if not text or not text.strip():
         return ""
 
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    f"You are a translator. Translate the user's text into {target_language}. "
-                    "Return only the translated text. Do not explain anything."
-                ),
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ],
-    )
+    response = translator_llm.invoke([
+        SystemMessage(
+            content=(
+                f"You are a translator. Translate the user's text into {target_language}. "
+                "Return only the translated text. Do not explain anything."
+            )
+        ),
+        HumanMessage(content=text),
+    ])
 
-    return (response.output_text or "").strip()
+    return (response.text or "").strip()
 
 
 def transcribe_audio_file(audio_path: str) -> str:
@@ -553,208 +559,169 @@ def add_subtitle_to_video_file(
     )
 
 # -------------------
-# TOOL DEFINITIONS
+# TOOL INPUT SCHEMAS
 # -------------------
-filecreate_function = {
-    "name": "create_text_file",
-    "description": "Create a text file with the content requested by the user.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "filename": {
-                "type": "string",
-                "description": "Provide the filename with relevant extension (.html, .txt, etc.) but do not use .pdf here."
-            },
-            "content": {
-                "type": "string",
-                "description": "The content to write into the text file"
-            }
-        },
-        "required": ["filename", "content"],
-        "additionalProperties": False
-    }
-}
-
-pdfcreate_function = {
-    "name": "create_pdf",
-    "description": "Create a PDF file with the content requested by the user.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "filename": {
-                "type": "string",
-                "description": "Provide the filename with .pdf"
-            },
-            "content": {
-                "type": "string",
-                "description": "The content to write into the PDF file"
-            }
-        },
-        "required": ["filename", "content"],
-        "additionalProperties": False
-    }
-}
-
-imagecreate_function = {
-    "name": "create_image",
-    "description": "Create an image with the content requested by the user.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "filename": {
-                "type": "string",
-                "description": "Filename with relevant image extension e.g. image.png"
-            },
-            "content": {
-                "type": "string",
-                "description": "The prompt to generate the image"
-            },
-            "size": {
-                "type": "string",
-                "enum": ["1024x1024", "1024x1792", "1792x1024"],
-                "description": "Image size"
-            }
-        },
-        "required": ["filename", "content", "size"],
-        "additionalProperties": False
-    }
-}
-
-websearch_function = {
-    "name": "web_search",
-    "description": "Search the web for current information using DuckDuckGo",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search query"
-            }
-        },
-        "required": ["query"]
-    }
-}
-
-subtitle_video_function = {
-    "name": "add_subtitle_to_video_file",
-    "description": (
-        "Add subtitles to an existing video file owned by the user, save the new subtitled video "
-        "to Oracle Cloud, and create a new file record. The user may provide either the file_id "
-        "or the filename of the target video."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "file_id": {
-                "type": "string",
-                "description": "The target video file id to subtitle"
-            },
-            "filename": {
-                "type": "string",
-                "description": "The target video filename, e.g. mark.mp4"
-            },
-            "language": {
-                "type": "string",
-                "description": "The subtitle language, e.g. Sinhala, English, Tamil"
-            },
-            "output_filename": {
-                "type": "string",
-                "description": "The filename for the new subtitled video, e.g. sub.mp4"
-            }
-        },
-        "required": ["language", "output_filename"],
-        "additionalProperties": False
-    }
-}
+class TextFileInput(BaseModel):
+    filename: str = Field(
+        description="Provide the filename with relevant extension (.html, .txt, etc.) but do not use .pdf here."
+    )
+    content: str = Field(description="The content to write into the text file")
 
 
+class PdfFileInput(BaseModel):
+    filename: str = Field(description="Provide the filename with .pdf")
+    content: str = Field(description="The content to write into the PDF file")
 
-tools = [
-    {"type": "function", "function": filecreate_function},
-    {"type": "function", "function": pdfcreate_function},
-    {"type": "function", "function": imagecreate_function},
-    {"type": "function", "function": websearch_function},
-    {"type": "function", "function": subtitle_video_function},
+
+class ImageInput(BaseModel):
+    filename: str = Field(description="Filename with relevant image extension e.g. image.png")
+    content: str = Field(description="The prompt to generate the image")
+    size: Literal["1024x1024", "1536x1024", "1024x1536", "auto"] = Field(
+        default="1024x1024", description="Image size"
+    )
+
+
+class WebSearchInput(BaseModel):
+    query: str = Field(description="Search query")
+
+
+class SubtitleVideoInput(BaseModel):
+    language: str = Field(
+        default="Sinhala",
+        description="The subtitle language, e.g. Sinhala, English, Tamil",
+    )
+    output_filename: Optional[str] = Field(
+        default=None,
+        description="The filename for the new subtitled video, e.g. sub.mp4",
+    )
+    file_id: Optional[str] = Field(
+        default=None, description="The target video file id to subtitle"
+    )
+    filename: Optional[str] = Field(
+        default=None, description="The target video filename, e.g. mark.mp4"
+    )
+
+
+# -------------------
+# LANGGRAPH CONTEXT
+# -------------------
+@dataclass
+class AgentContext:
+    """Per-request runtime context. The user is injected into tools via
+    ToolRuntime, so the LLM never sees or controls it."""
+    user: dict
+
+
+# -------------------
+# TOOLS
+# -------------------
+@tool("create_text_file", args_schema=TextFileInput)
+def create_text_file_tool(filename: str, content: str, runtime: ToolRuntime[AgentContext]) -> str:
+    """Create a text file with the content requested by the user."""
+    return create_text_file(filename, content, runtime.context.user)
+
+
+@tool("create_pdf", args_schema=PdfFileInput)
+def create_pdf_tool(filename: str, content: str, runtime: ToolRuntime[AgentContext]) -> str:
+    """Create a PDF file with the content requested by the user."""
+    return create_pdf(filename, content, runtime.context.user)
+
+
+@tool("create_image", args_schema=ImageInput)
+def create_image_tool(
+    filename: str,
+    content: str,
+    runtime: ToolRuntime[AgentContext],
+    size: str = "1024x1024",
+) -> str:
+    """Create an image with the content requested by the user."""
+    return create_image(filename, content, runtime.context.user, size)
+
+
+@tool("web_search", args_schema=WebSearchInput)
+def web_search_tool(query: str) -> list:
+    """Search the web for current information using DuckDuckGo."""
+    return web_search(query)
+
+
+@tool("add_subtitle_to_video_file", args_schema=SubtitleVideoInput)
+def add_subtitle_tool(
+    runtime: ToolRuntime[AgentContext],
+    language: str = "Sinhala",
+    output_filename: Optional[str] = None,
+    file_id: Optional[str] = None,
+    filename: Optional[str] = None,
+) -> str:
+    """Add subtitles to an existing video file owned by the user, save the new subtitled
+    video to Oracle Cloud, and create a new file record. The user may provide either the
+    file_id or the filename of the target video."""
+    try:
+        return add_subtitle_to_video_file(
+            user=runtime.context.user,
+            file_id=file_id,
+            filename=filename,
+            language=language,
+            output_filename=output_filename,
+        )
+    except ValueError as e:
+        # Let the model tell the user what went wrong (e.g. file not found)
+        return f"Error: {e}"
+
+
+TOOLS = [
+    create_text_file_tool,
+    create_pdf_tool,
+    create_image_tool,
+    web_search_tool,
+    add_subtitle_tool,
 ]
 
+llm_with_tools = llm.bind_tools(TOOLS)
+
 
 # -------------------
-# TOOL HANDLER
+# LANGGRAPH AGENT
 # -------------------
-def handle_tool_call(message, user):
-    tool_call = message.tool_calls[0]
-    args = json.loads(tool_call.function.arguments)
-    name = tool_call.function.name
+def agent_node(state: MessagesState) -> dict:
+    """Call the LLM with the system prompt + conversation so far."""
+    response = llm_with_tools.invoke(
+        [SystemMessage(content=system_message), *state["messages"]]
+    )
+    return {"messages": [response]}
 
-    if name == "create_text_file":
-        result = create_text_file(args["filename"], args["content"], user)
 
-    elif name == "create_pdf":
-        result = create_pdf(args["filename"], args["content"], user)
+def build_graph():
+    graph = StateGraph(MessagesState, context_schema=AgentContext)
 
-    elif name == "create_image":
-        result = create_image(
-            args["filename"],
-            args["content"],
-            user,
-            args.get("size", "1024x1024")
-        )
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", ToolNode(TOOLS))
 
-    elif name == "web_search":
-        result = web_search(args["query"])
+    graph.add_edge(START, "agent")
+    # If the LLM requested tool calls, run them; otherwise finish.
+    graph.add_conditional_edges("agent", tools_condition, {"tools": "tools", END: END})
+    graph.add_edge("tools", "agent")
 
-    elif name == "add_subtitle_to_video_file":
-        result = add_subtitle_to_video_file(
-            user=user,
-            file_id=args.get("file_id"),
-            filename=args.get("filename"),
-            language=args.get("language", "Sinhala"),
-            output_filename=args.get("output_filename"),
-        )
+    return graph.compile()
 
-    else:
-        result = "Unknown tool"
 
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "content": json.dumps({"result": result})
-    }
+file_agent_graph = build_graph()
 
 
 # -------------------
 # MAIN AGENT
 # -------------------
 def run_agent(message, history, user):
-    messages = [{"role": "system", "content": system_message}]
-
+    messages = []
     for h in history:
-        messages.append({
-            "role": h.role,
-            "content": h.content
-        })
+        if h.role == "user":
+            messages.append(HumanMessage(content=h.content))
+        elif h.role == "assistant":
+            messages.append(AIMessage(content=h.content))
+    messages.append(HumanMessage(content=message))
 
-    messages.append({"role": "user", "content": message})
-
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        tools=tools
+    result = file_agent_graph.invoke(
+        {"messages": messages},
+        context=AgentContext(user=user),
     )
 
-    assistant_message = response.choices[0].message
-
-    if response.choices[0].finish_reason == "tool_calls":
-        tool_response = handle_tool_call(assistant_message, user)
-
-        messages.append(assistant_message)
-        messages.append(tool_response)
-
-        final = client.chat.completions.create(
-            model=MODEL,
-            messages=messages
-        )
-
-        return final.choices[0].message.content
-
-    return assistant_message.content
+    return result["messages"][-1].text
